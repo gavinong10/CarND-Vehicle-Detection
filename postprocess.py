@@ -34,7 +34,7 @@ def draw_boxes(imgs, segmentation_maps, num_cars):
     imgs_superimposed = imgs.copy()
     overlays = imgs.copy()
     for i, img in enumerate(imgs):
-        for car_num in xrange(1, num_cars[i] + 1):
+        for car_num in range(1, num_cars[i] + 1):
             # Find pixels with each car_number label value
             nonzero = np.where(segmentation_maps[i] == car_num)
 
@@ -54,6 +54,38 @@ def draw_boxes(imgs, segmentation_maps, num_cars):
         imgs_superimposed[i] = cv2.addWeighted(overlays[i], 0.5, imgs_superimposed[i], 0.5, 0)
 
     return imgs_superimposed
+
+class RingBufSmoother(object):
+    """
+    Smoothes heatmaps across several iterations and applies thresholds
+    """
+
+    def __init__(self, shape, length=10, threshold=4):
+        self.length = length
+        self.data = np.zeros([length] + list(shape), dtype=np.float32)
+        self.threshold = threshold
+        self.index = 0
+        self.count = 0
+
+    def extend(self, x):
+        """
+        Adds array x to ring buffer.
+        :param x: The element to add to the RingBuffer
+        """
+        self.data[self.index] = x
+        self.index = (self.index + 1) % self.length
+
+        self.count += 1
+        if self.count > len(self.data):
+            self.count = len(self.data)
+
+    def mean(self):
+        return np.mean(self.data[:self.count], axis = 0)
+
+    def rolling_threshold(self):
+        heatmap = self.mean() 
+        heatmap[heatmap < self.threshold] = 0
+        return heatmap
 
 # # Read in a pickle file with bboxes saved
 # # Each item in the "all_bboxes" list will contain a 
