@@ -78,6 +78,82 @@ def produce_heatmaps(frames, svc_model, X_scaler, le):
                                    scale=0.75, colorspace=c.COLORSPACE, spatial_size=c.COLOR_BIN_SHAPE, hist_bins=c.NUM_HIST_BINS)
     
     return heatmaps
+
+def gen_images_from_video():
+    """
+    A function to generate heatmap images from the video stream
+    """
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    import matplotlib.gridspec as gridspec
+
+    if c.RETRAIN:
+        df = prepare_df()
+        svc_model, le, X_scaler = model.train_model(df)
+        pickle.dump(svc_model, open('models/svc_model%s.p' % (c.SAVE_LOAD_APPENDIX), 'wb'))
+        pickle.dump(le, open('models/le%s.p' % (c.SAVE_LOAD_APPENDIX), 'wb'))
+        pickle.dump(X_scaler, open('models/X_scaler%s.p' % (c.SAVE_LOAD_APPENDIX), 'wb'))
+    
+    svc_model = pickle.load(open('models/svc_model%s.p' % (c.SAVE_LOAD_APPENDIX), 'rb'))
+    le = pickle.load(open('models/le%s.p' % (c.SAVE_LOAD_APPENDIX), 'rb'))
+    X_scaler = pickle.load(open('models/X_scaler%s.p' % (c.SAVE_LOAD_APPENDIX), 'rb'))
+    
+    # Load in images from video
+    frames_generator, n_frames = get_generator_for_frames(batch_size=c.BATCH_SIZE)
+    
+    frames_to_process = c.FRAMES_TO_PROCESS or n_frames
+
+    smoother = None    
+    frames_processed = 0
+    start_offset = 0
+
+    plt.figure(1)
+    fig = plt.figure(figsize=(20, 5 * c.FRAMES_TO_PROCESS))
+    plt.figure(2)
+    fig = plt.figure(figsize=(20, 5 * c.FRAMES_TO_PROCESS))
+    gs = gridspec.GridSpec(c.FRAMES_TO_PROCESS, 2)
+
+    for frames in frames_generator:
+        if start_offset < c.START_FRAME:
+            start_offset += len(frames)
+            continue
+            
+        heatmaps = produce_heatmaps(frames, svc_model, X_scaler, le)
+        
+        if smoother is None:
+            smoother = postprocess.RingBufSmoother(heatmaps[0].shape, length=c.BUFFER_LEN, threshold=c.MIN_HEAT_THRES)
+
+        # Extend and apply rolling threshold through the heatmaps
+        thresholded_heatmaps = []
+        for heatmap in heatmaps:
+            smoother.extend(heatmap)
+            thresholded_heatmaps.append(smoother.rolling_threshold())
+            
+        car_segmentation, num_cars = postprocess.segment_cars(thresholded_heatmaps)
+        imgs_superimposed = postprocess.draw_boxes(frames, car_segmentation, num_cars)
+
+        raw_bboxes = postprocess.draw_boxes(np.zeros_like(frames), car_segmentation, num_cars)
+
+        for i in range(0, c.BATCH_SIZE):
+            plt.figure(1)
+            orig_frame_rgb = cv2.cvtColor(frames[i], cv2.COLOR_BGR2RGB)
+            plt.subplot(gs[frames_processed + i, 0]).imshow(orig_frame_rgb)
+            plt.subplot(gs[frames_processed + i, 1]).imshow(heatmaps[i], cmap='hot')
+
+            plt.figure(2)
+            plt.subplot(gs[frames_processed + i, 0]).imshow(orig_frame_rgb)
+            plt.subplot(gs[frames_processed + i, 1]).imshow(raw_bboxes[i])
+
+        
+        frames_processed += len(frames)
+        if frames_processed >= frames_to_process:
+            break
+    
+    plt.savefig('output_images/heatmaps.png')
+    plt.savefig('output_images/labelled_bboxes.png')
+    # Release everything if job is finished
+    # cap.release()
     
 def main(): 
     if c.RETRAIN:
@@ -138,3 +214,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    #gen_images_from_video()

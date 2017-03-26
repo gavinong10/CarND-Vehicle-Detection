@@ -91,21 +91,12 @@ def get_hog_features(imgs, orient, pix_per_cell, cell_per_block,
         features = np.stack(features)
         return features
 
-def get_sliding_window_preds(imgs, model, scaler, le, orient, pix_per_cell, cell_per_block, y_start=400, y_stop=656, cell_stride=2, scale=1, colorspace="HLS", spatial_size=(16, 16), hist_bins=32):
+def get_sliding_window_preds(imgs, model, scaler, le, orient, pix_per_cell, cell_per_block, y_start=400, y_stop=656, cell_stride=2, scale=1, colorspace="HLS", spatial_size=(16, 16), hist_bins=32, show_window=False):
     """
-    Gets detection predictions from a trained model on a sliding window over the given images.
-    :param imgs: The images for which to get predictions.
-    :param model: The model to make predictions.
-    :param scaler: The scaler used to normalize the data when training.
-    :param y_start: The pixel value on the y axis at which to start searching for cars (Top of
-                    search window).
-    :param y_stop: The pixel value on the y axis at which to stop searching for cars (Bottom of
-                   search window).
-    :param cell_stride: The stride of the sliding window, in HOG cells.
-    :param scale: The scale of the sliding window relative to the training window size
-                         (64x64).
-    :param color_space: The color space to which to convert the images.
-    :return: A heatmap of the predictions at each sliding window location for all images in imgs.
+    Applies HOGS, color binning and color histogram transformations to be 
+    fed into a scaler -> SVC model to predict if patches of various sizes
+    across a series of images have vehicles in them. Produces a series of
+    heatmaps for car predictions as an output.
     """
     heatmaps = np.zeros(imgs.shape[:3])
 
@@ -113,6 +104,7 @@ def get_sliding_window_preds(imgs, model, scaler, le, orient, pix_per_cell, cell
     imgs_cropped = imgs_cvt[:, y_start:y_stop, :, :]
 
     height, width = imgs_cropped.shape[1:3]
+    orig_height, orig_width = height, width # preserve these values for later
 
     # Scale the images based on the window scale. Because the model was trained on 64x64 patches
     # of HOG features, we still need that many features, so if we want a smaller window, we need
@@ -120,6 +112,10 @@ def get_sliding_window_preds(imgs, model, scaler, le, orient, pix_per_cell, cell
     if scale != 1:
         imgs_cropped = np.array([cv2.resize(img_cropped, (int(width / scale), int(height / scale))) for img_cropped in imgs_cropped])
         height, width = imgs_cropped.shape[1:3]
+
+    if show_window:
+        sliding_window = np.zeros(imgs.shape[1:]).astype(np.uint8)
+        detections = np.zeros(imgs.shape).astype(np.uint8)
 
     num_blocks_x = (width // pix_per_cell) - 1
     num_blocks_y = (height // pix_per_cell) - 1
@@ -139,7 +135,6 @@ def get_sliding_window_preds(imgs, model, scaler, le, orient, pix_per_cell, cell
         for y_step in range(num_steps_y):
             y_pos = y_step * cell_stride
             x_pos = x_step * cell_stride
-
             
             # Extract HOG for this patch
             patch_HOG_channels = [np.reshape(hog_features[:,
@@ -163,8 +158,7 @@ def get_sliding_window_preds(imgs, model, scaler, le, orient, pix_per_cell, cell
 
 
             # Combine and normalize features
-            patch_features = np.concatenate([patch_HOG, patch_color_bins, patch_color_hists],
-                                            axis=1)
+            patch_features = np.concatenate([patch_HOG, patch_color_bins, patch_color_hists], axis=1)
             patch_features_norm = scaler.transform(patch_features)
 
             # Make prediction
@@ -177,9 +171,23 @@ def get_sliding_window_preds(imgs, model, scaler, le, orient, pix_per_cell, cell
             ytop_abs = np.int(ytop * scale) + y_start
             window_width_abs = np.int(window * scale)
 
+            predictions_inverse_transform = le.inverse_transform(patch_preds)
             # Add prediction to the heatmap
             heatmaps[:, ytop_abs :ytop_abs + window_width_abs,
-                        xleft_abs:xleft_abs + window_width_abs] += le.inverse_transform(patch_preds) == "vehicles"
+                        xleft_abs:xleft_abs + window_width_abs] += predictions_inverse_transform == "vehicles"
+
+            if show_window:
+                # Draw blue rectangle on sliding_windows on the first sliding window; copy through at the end.
+                cv2.rectangle(sliding_window, (xleft_abs, ytop_abs), (xleft_abs + window_width_abs, ytop_abs + window_width_abs), (0, 0, 255), 6)
+
+                for idx, detect_image in enumerate(detections):
+                    if predictions_inverse_transform[idx] == "vehicles":
+                        # Plot bounding box
+                        cv2.rectangle(detect_image, (xleft_abs, ytop_abs), (xleft_abs + window_width_abs, ytop_abs + window_width_abs), (0, 0, 255), 6)
+
+   
+    if show_window:
+        return heatmaps, detections, sliding_window
 
     return heatmaps
 
