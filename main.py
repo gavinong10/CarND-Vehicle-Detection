@@ -21,7 +21,6 @@ def prepare_df():
     vehicle_data = data.retrieve_data("vehicles")
     non_vehicle_data = data.retrieve_data("non-vehicles")
 
-    # TODO: Ensure there is no class imbalance; fix as necessary
     df = pd.concat([vehicle_data, non_vehicle_data])
     
     # Since n_splits is 1, generator should only produce one object
@@ -91,35 +90,14 @@ def main():
     svc_model = pickle.load(open('models/svc_model%s.p' % (c.SAVE_LOAD_APPENDIX), 'rb'))
     le = pickle.load(open('models/le%s.p' % (c.SAVE_LOAD_APPENDIX), 'rb'))
     X_scaler = pickle.load(open('models/X_scaler%s.p' % (c.SAVE_LOAD_APPENDIX), 'rb'))
-
-    if c.LOAD_DYELAX:
-        def load_model(path='models/model-HLS-12-FULL.pkl'):
-            """
-            Loads a trained model from file.
-
-            :param path: The filepath from which to load the model.
-
-            :return: A tuple, (model, scaler).
-            """
-            save_dict = joblib.load(path)
-
-            model = save_dict['model']
-            scaler = save_dict['scaler']
-
-            return model, scaler
-
-        svc_model, X_scaler = load_model()
     
     # Load in images from video
     frames_generator, n_frames = get_generator_for_frames(batch_size=c.BATCH_SIZE)
     
     frames_to_process = c.FRAMES_TO_PROCESS or n_frames
 
-    output_name = "output.mp4"
-    smoother = None
-    
+    smoother = None    
     writer = None
-    
     frames_processed = 0
     start_offset = 0
     for frames in frames_generator:
@@ -144,7 +122,7 @@ def main():
         # Write images to video
         
         if writer is None:
-            writer = skvideo.io.FFmpegWriter(output_name)
+            writer = skvideo.io.FFmpegWriter(c.OUTPUT_NAME)
             
         vid_frames = [cv2.cvtColor(img, cv2.COLOR_BGR2RGB) for img in imgs_superimposed]
         

@@ -13,10 +13,10 @@ MIN_HEAT_THRES = 14
 
 ########################
 
-UNBIAS_DATA = True
-RETRAIN = False
-LOAD_DYELAX = False
-SAVE_LOAD_APPENDIX = "_unbiased"
+UNBIAS_DATA = False
+RETRAIN = True
+SAVE_LOAD_APPENDIX = "_biased"
+OUTPUT_NAME = "biased_output.mp4"
 
 BATCH_SIZE = 20
 START_FRAME = 0

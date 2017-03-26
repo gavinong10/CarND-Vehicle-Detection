@@ -178,12 +178,8 @@ def get_sliding_window_preds(imgs, model, scaler, le, orient, pix_per_cell, cell
             window_width_abs = np.int(window * scale)
 
             # Add prediction to the heatmap
-            if c.LOAD_DYELAX:
-                     heatmaps[:, ytop_abs :ytop_abs + window_width_abs,
-                        xleft_abs:xleft_abs + window_width_abs] += patch_preds
-            else:
-                heatmaps[:, ytop_abs :ytop_abs + window_width_abs,
-                            xleft_abs:xleft_abs + window_width_abs] += le.inverse_transform(patch_preds) == "vehicles"
+            heatmaps[:, ytop_abs :ytop_abs + window_width_abs,
+                        xleft_abs:xleft_abs + window_width_abs] += le.inverse_transform(patch_preds) == "vehicles"
 
     return heatmaps
 
