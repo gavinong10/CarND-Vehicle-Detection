@@ -1,6 +1,7 @@
 from sklearn.model_selection import ShuffleSplit
 from skimage.feature import hog
 from sklearn.preprocessing import MinMaxScaler, LabelEncoder
+from sklearn.externals import joblib
 import cv2
 import itertools
 import pandas as pd
@@ -10,11 +11,10 @@ import glob
 import pickle
 import skvideo.io
 
-import slide
 import postprocess
 import data
 import model
-import preprocess
+import constants as c
 
 def prepare_df():
     # Read in all the car and non-car classes
@@ -28,6 +28,9 @@ def prepare_df():
     train_idx, test_idx = next(ShuffleSplit(n_splits=1, test_size=0.2, random_state=0).split(df))
     df['dataset'] = 'test'
     df['dataset'].iloc[train_idx.tolist()] = 'train'
+
+    # Shuffle the dataframe - in case there are iteration based operations done on it
+    df = df.sample(frac=1)
     
     return df
     
@@ -61,63 +64,73 @@ def extract_frames_from_video(cap, batch_size):
     cv2.destroyAllWindows()
     if len(frames) > 0:
         yield np.array(frames)
-        
-def produce_heatmaps(frames, svc_model, X_scaler, le, orient, pix_per_cell, cell_per_block, colorspace, spatial_size, hist_bins):
-    heatmaps = model.get_sliding_window_preds(frames, svc_model, X_scaler, le, orient, pix_per_cell, cell_per_block, 
+
+def produce_heatmaps(frames, svc_model, X_scaler, le):
+    heatmaps = model.get_sliding_window_preds(frames, svc_model, X_scaler, le, c.ORIENT, c.PIX_PER_CELL, c.CELL_PER_BLOCK, 
                                y_start=400, y_stop=656, cell_stride=2,
-                               scale=1, colorspace=colorspace, spatial_size=spatial_size, hist_bins=hist_bins)
+                               scale=1, colorspace=c.COLORSPACE, spatial_size=c.COLOR_BIN_SHAPE, hist_bins=c.NUM_HIST_BINS)
 
-    heatmaps += model.get_sliding_window_preds(frames, svc_model, X_scaler, le, orient, pix_per_cell, cell_per_block, 
+    heatmaps += model.get_sliding_window_preds(frames, svc_model, X_scaler, le, c.ORIENT, c.PIX_PER_CELL, c.CELL_PER_BLOCK, 
                                    y_start=400, y_stop=656, cell_stride=2,
-                                   scale=1.5, colorspace=colorspace, spatial_size=spatial_size, hist_bins=hist_bins)
+                                   scale=1.5, colorspace=c.COLORSPACE, spatial_size=c.COLOR_BIN_SHAPE, hist_bins=c.NUM_HIST_BINS)
 
-    heatmaps += model.get_sliding_window_preds(frames, svc_model, X_scaler, le, orient, pix_per_cell, cell_per_block, 
+    heatmaps += model.get_sliding_window_preds(frames, svc_model, X_scaler, le, c.ORIENT, c.PIX_PER_CELL, c.CELL_PER_BLOCK, 
                                    y_start=400, y_stop=500, cell_stride=2,
-                                   scale=0.75, colorspace=colorspace, spatial_size=spatial_size, hist_bins=hist_bins)
+                                   scale=0.75, colorspace=c.COLORSPACE, spatial_size=c.COLOR_BIN_SHAPE, hist_bins=c.NUM_HIST_BINS)
     
     return heatmaps
     
-def main():
-    ###### PARAMETERS ######
-    COLORSPACE = 'HLS'
-    ORIENT = 12
-    PIX_PER_CELL = 8 # number of pixels to calculate the gradient
-    CELL_PER_BLOCK = 2 # the local area over which the histogram counts in a given cell will be normalized
-    # Color Bin
-    COLOR_BIN_SHAPE = (16, 16)
-    # Color Hist
-    NUM_HIST_BINS = 32
-    ########################
+def main(): 
+    if c.RETRAIN:
+        df = prepare_df()
+        svc_model, le, X_scaler = model.train_model(df)
+        pickle.dump(svc_model, open('models/svc_model%s.p' % (c.SAVE_LOAD_APPENDIX), 'wb'))
+        pickle.dump(le, open('models/le%s.p' % (c.SAVE_LOAD_APPENDIX), 'wb'))
+        pickle.dump(X_scaler, open('models/X_scaler%s.p' % (c.SAVE_LOAD_APPENDIX), 'wb'))
     
-    # df = prepare_df()
-    # svc_model, le, X_scaler = model.train_model(df, COLORSPACE, ORIENT, PIX_PER_CELL, CELL_PER_BLOCK, COLOR_BIN_SHAPE, NUM_HIST_BINS)
-    # pickle.dump(svc_model, open('svc_model.p', 'wb'))
-    # pickle.dump(le, open('le.p', 'wb'))
-    # pickle.dump(X_scaler, open('X_scaler.p', 'wb'))
-    
-    svc_model = pickle.load(open('svc_model.p', 'rb'))
-    le = pickle.load(open('le.p', 'rb'))
-    X_scaler = pickle.load(open('X_scaler.p', 'rb'))
+    svc_model = pickle.load(open('models/svc_model%s.p' % (c.SAVE_LOAD_APPENDIX), 'rb'))
+    le = pickle.load(open('models/le%s.p' % (c.SAVE_LOAD_APPENDIX), 'rb'))
+    X_scaler = pickle.load(open('models/X_scaler%s.p' % (c.SAVE_LOAD_APPENDIX), 'rb'))
+
+    if c.LOAD_DYELAX:
+        def load_model(path='models/model-HLS-12-FULL.pkl'):
+            """
+            Loads a trained model from file.
+
+            :param path: The filepath from which to load the model.
+
+            :return: A tuple, (model, scaler).
+            """
+            save_dict = joblib.load(path)
+
+            model = save_dict['model']
+            scaler = save_dict['scaler']
+
+            return model, scaler
+
+        svc_model, X_scaler = load_model()
     
     # Load in images from video
-    batch_size=50
-    frames_to_process = 50
+    frames_generator, n_frames = get_generator_for_frames(batch_size=c.BATCH_SIZE)
     
-    frames_generator, n_frames = get_generator_for_frames(batch_size=batch_size)
-    n_frames = min(frames_to_process - frames_to_process % batch_size, n_frames)
-    
+    frames_to_process = c.FRAMES_TO_PROCESS or n_frames
+
     output_name = "output.mp4"
     smoother = None
     
     writer = None
     
     frames_processed = 0
+    start_offset = 0
     for frames in frames_generator:
-        heatmaps = produce_heatmaps(frames, svc_model, X_scaler, le, ORIENT, PIX_PER_CELL, CELL_PER_BLOCK, 
-                               COLORSPACE, COLOR_BIN_SHAPE, NUM_HIST_BINS)
+        if start_offset < c.START_FRAME:
+            start_offset += len(frames)
+            continue
+            
+        heatmaps = produce_heatmaps(frames, svc_model, X_scaler, le)
         
         if smoother is None:
-            smoother = model.RingBufSmoother(heatmaps[0].shape, threshold=7)
+            smoother = postprocess.RingBufSmoother(heatmaps[0].shape, length=c.BUFFER_LEN, threshold=c.MIN_HEAT_THRES)
 
         # Extend and apply rolling threshold through the heatmaps
         thresholded_heatmaps = []
@@ -131,15 +144,12 @@ def main():
         # Write images to video
         
         if writer is None:
-            #print(tuple([n_frames] + list(imgs_superimposed.shape[1:])))
-            writer = skvideo.io.FFmpegWriter(output_name)#, tuple([n_frames] + list(imgs_superimposed.shape[1:])) )
+            writer = skvideo.io.FFmpegWriter(output_name)
             
         vid_frames = [cv2.cvtColor(img, cv2.COLOR_BGR2RGB) for img in imgs_superimposed]
-        skvideo.io.vwrite(output_name, vid_frames)
         
         for i in range(len(vid_frames)):
             writer.writeFrame(vid_frames[i])
-        writer.close()
         frames_processed += len(frames)
         if frames_processed >= frames_to_process:
             break

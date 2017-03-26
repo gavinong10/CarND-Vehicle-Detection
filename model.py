@@ -1,207 +1,95 @@
 import numpy as np
 import cv2
-from preprocess import bin_spatial, color_hist, get_hog_features
 from sklearn.svm import LinearSVC
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 import pandas as pd
-import preprocess
+from skimage.feature import hog
+import constants as c
 
 def return_model():
     svc = LinearSVC()
     
     return svc
 
-def train_model(df, colorspace, orient, pix_per_cell, cell_per_block, spatial_size=(16, 16), hist_bins=32):
+def train_model(df, validate=False):
     X_scaler = StandardScaler()
     le = LabelEncoder()
+
+    if validate:
+        # TODO: split into train/validation sets, predict on validation set and 
+        # report the accuracy
+        pass
     
     # Create a model using all the data (Balance the vehicles and non-vehicles classes through sampling for removing bias)
-    len_imbalance = sum(df["category"] == "vehicles") - sum(df["category"] == "non-vehicles")
-    balanced_df = pd.concat([df[df["category"] == "non-vehicles"], \
-                             df[df["category"] == "non-vehicles"].sample(len_imbalance, replace=True), \
-                             df[df["category"] == "vehicles"]])
+    if c.UNBIAS_DATA:
+        len_imbalance = sum(df["category"] == "vehicles") - sum(df["category"] == "non-vehicles")
+        train_df = pd.concat([df[df["category"] == "non-vehicles"], \
+                                df[df["category"] == "non-vehicles"].sample(len_imbalance, replace=True), \
+                                df[df["category"] == "vehicles"]])
 
-    hog_features = get_all_hog_features(balanced_df["image"], colorspace, orient, pix_per_cell, cell_per_block)
-    spatial_features = get_all_color_bin_features(balanced_df["image"], spatial_size)
-    hist_features = get_all_color_hist_features(balanced_df["image"], hist_bins)
+    else:
+        train_df = df.copy()
+
+    # Read images as a batch for training on hog features, color bins and
+    # histogram features
+
+    X_train_batches = []
+    for start in range(0, len(train_df), c.BATCH_SIZE):
+        # Read images
+        imgs = train_df['image'].iloc[start:start + c.BATCH_SIZE].apply(cv2.imread)
+
+        # Convert color
+        imgs = np.array([cv2.cvtColor(img, eval("cv2.COLOR_BGR2" + c.COLORSPACE)) for img in imgs])
+
+        hog_features = get_hog_features(imgs, c.ORIENT, c.PIX_PER_CELL, c.CELL_PER_BLOCK, vis=False, feature_vec=True)
+        hog_features = hog_features.reshape(hog_features.shape[0], -1)
+        spatial_features = get_color_bin_features(imgs, c.COLOR_BIN_SHAPE)
+        hist_features = get_color_hist_features(imgs, c.NUM_HIST_BINS)
         
-    X_train = np.hstack((hog_features, spatial_features, hist_features))
+        X_train_batches.append(np.concatenate((hog_features, spatial_features, hist_features), axis=1))
+
+    X_train = np.concatenate(X_train_batches)
     X_train = X_scaler.fit_transform(X_train)
-    y_train = le.fit_transform(balanced_df['category'])
+    y_train = le.fit_transform(train_df['category'])
     svc_model = return_model()
     svc_model.fit(X_train, y_train)
     
     return svc_model, le, X_scaler
-        
-def get_all_color_bin_features(img_files, spatial_size):
-    """
-    Calculates color bin features for the given images by downsizing and taking each pixel as
-    representative of the colors of the surrounding pixels in the full-size image.
-    :param imgs: The images for which to calculate color bin features.
-    :param shape: A tuple, (height, width) - the shape to which imgs should be downsized.
-    :return: The color bin features for imgs.
-    """
-    # Sized to hold the ravelled pixels of each downsized image.
-    features = [] #np.empty([imgs.shape[0], shape[0] * shape[1] * imgs.shape[3]])
 
-    # Resize and ravel every image to get color bin features.
-    for i, img_file in enumerate(img_files):
-        img = cv2.imread(img_file)
-        features.append(cv2.resize(img, spatial_size).ravel())
+# Define a function to compute binned color features  
+def get_color_bin_features(imgs, size=(32, 32)):
+    features = []
+    for img in imgs:
+        features.append(cv2.resize(img, size).ravel())
+    return np.stack(features)
 
-    return np.vstack(features)
-
-def get_all_color_hist_features(img_files, nbins, bins_range=(0, 256)):
-    """
-    Calculates color histogram features for each channel of the given images.
-    :param imgs: The images for which to calculate a color histogram.
-    :param nbins: The number of histogram bins to sort the color values into.
-    :param bins_range: The range of values over all bins.
-    :return: The color histogram features of each channel for every image in imgs.
-    """
-    sample_img = cv2.imread(img_files.iloc[0])
-    num_features = sample_img.shape[-1] * nbins
-    hist_features = np.empty([len(img_files), num_features])
-
-    for i, img_file in enumerate(img_files):
-        img = cv2.imread(img_file)
-        # Compute the histogram of the color channels separately
-        channel1_hist = np.histogram(img[:,:,0], bins=nbins, range=bins_range)
-        channel2_hist = np.histogram(img[:,:,1], bins=nbins, range=bins_range)
-        channel3_hist = np.histogram(img[:,:,2], bins=nbins, range=bins_range)
-
+# Define a function to compute color histogram features  
+def get_color_hist_features(imgs, nbins=32, bins_range=(0, 256)):
+    hist_features = []
+    for img in imgs:
+        channels_hist = [np.histogram(img[:,:,i], bins=nbins, range=bins_range)[0] for i in range(img.shape[2])]
         # Concatenate the histograms into a single feature vector
-        hist_features[i] = np.concatenate((channel1_hist[0], channel2_hist[0], channel3_hist[0]))
+        hist_features.append(np.hstack(channels_hist))
+    # Return the individual histograms, bin_centers and feature vector
+    return np.stack(hist_features)
 
-    return hist_features
-
-def get_all_hog_features(img_files, colorspace, orient, pix_per_cell, cell_per_block):
-    total_hog_features = []
-    for idx, img_file in enumerate(img_files):
-        # Read in image
-        img = cv2.imread(img_file)
-        #img = mpimg.imread(item['image'])
-        if colorspace != 'RGB':
-            conv_img = cv2.cvtColor(img, eval("cv2.COLOR_BGR2" + colorspace))
-        else:
-            conv_img = np.copy(img)
-            
-        hog_features = []
-        for chan in range(conv_img.shape[2]):
-            hog_features = np.hstack([hog_features, preprocess.get_hog_features(conv_img[:,:,chan], orient, pix_per_cell, cell_per_block, vis=False, feature_vec=True)])
-            
-        total_hog_features.append(hog_features)
-        
-    return np.array(total_hog_features)
-
-# def get_sliding_window_preds(imgs, model, scaler, le, orient, pix_per_cell, cell_per_block, y_start=400, y_stop=656, cell_stride=2,
-#                              scale=1, colorspace="HLS", spatial_size=(16, 16), hist_bins=32):
-#     """
-#     Gets detection predictions from a trained model on a sliding window over the given images.
-#     :param imgs: The images for which to get predictions.
-#     :param model: The model to make predictions.
-#     :param scaler: The scaler used to normalize the data when training.
-#     :param y_start: The pixel value on the y axis at which to start searching for cars (Top of
-#                     search window).
-#     :param y_stop: The pixel value on the y axis at which to stop searching for cars (Bottom of
-#                    search window).
-#     :param cell_stride: The stride of the sliding window, in HOG cells.
-#     :param scale: The scale of the sliding window relative to the training window size
-#                          (64x64).
-#     :param color_space: The color space to which to convert the images.
-#     :return: A heatmap of the predictions at each sliding window location for all images in imgs.
-#     """
-#     heatmaps = np.zeros([len(imgs)] + list(imgs[0].shape[:2]))
-    
-#     # 64 was the orginal sampling rate, with 8 cells and 8 pix per cell
-#     window = 64
-#     nblocks_per_window = (window // pix_per_cell)-1 
-#     # Get the patch coordinates relative to the original image scale
-#     window_width_abs = np.int(window * scale)
-
-#     for idx, img in enumerate(imgs):
-#         img_tosearch = img[y_start:y_stop,:,:]
-#         ctrans_tosearch = cv2.cvtColor(img_tosearch, eval("cv2.COLOR_BGR2" + colorspace))
-#         if scale != 1:
-#             imshape = ctrans_tosearch.shape
-#             ctrans_tosearch = cv2.resize(ctrans_tosearch, (np.int(imshape[1]/scale), np.int(imshape[0]/scale)))
-
-#         # ch1 = ctrans_tosearch[:,:,0]
-#         # ch2 = ctrans_tosearch[:,:,1]
-#         # ch3 = ctrans_tosearch[:,:,2]
-
-#         # Define blocks and steps as above
-#         nxblocks = (ctrans_tosearch.shape[1] // pix_per_cell)-1
-#         nyblocks = (ctrans_tosearch.shape[0] // pix_per_cell)-1 
-#         nfeat_per_block = orient*cell_per_block**2
-
-        
-#         cells_per_step = 2  # Instead of overlap, define how many cells to step
-#         nxsteps = (nxblocks - nblocks_per_window) // cells_per_step
-#         nysteps = (nyblocks - nblocks_per_window) // cells_per_step
-        
-#         # Compute individual channel HOG features for the entire image
-#         hog = np.array([[preprocess.get_hog_features(ctrans_tosearch[:,:,ch], orient, pix_per_cell, cell_per_block, feature_vec=True)] for ch in range(3)])
-        
-#         total_features = []
-#         xlefts = []
-#         ytops = []
-#         for x_step in range(nxsteps):
-#             for y_step in range(nysteps):
-#                 y_pos = y_step * cell_stride
-#                 x_pos = x_step * cell_stride
-                
-#                 print(hog.shape)
-
-#                 # Extract HOG for this patch
-#                 patch_HOG = hog[:, y_pos:y_pos + nblocks_per_window,
-#                                       x_pos:x_pos + nblocks_per_window].ravel()
-                
-#                 xleft = x_pos * pix_per_cell
-#                 xlefts.append(xleft)
-                
-#                 ytop = y_pos * pix_per_cell
-#                 ytops.append(ytop)
-
-#                 # Extract the image patch
-#                 subimg = cv2.resize(ctrans_tosearch[ytop:ytop+window, xleft:xleft+window], (64,64))
-          
-#                 # Get color features
-#                 spatial_features = preprocess.bin_spatial(subimg, size=spatial_size)
-#                 hist_features = preprocess.color_hist(subimg, nbins=hist_bins)
-
-#                 # Combine and normalize features
-#                 patch_features = np.hstack([patch_HOG, spatial_features, hist_features])
-#                 total_features.append(patch_features)
-                
-#         total_features = np.vstack(total_features)
-
-#         xlefts = np.vstack(xlefts)
-#         ytops = np.vstack(ytops)
-        
-#         # Total Features Shape (912, 6744)
-#         total_features_norm = scaler.transform(total_features)
-
-#         # Make prediction
-#         patch_preds = model.predict(total_features_norm)
-#         # Reshape so it can be broadcast with the 3D heatmaps array.
-#         patch_preds = np.reshape(patch_preds, [len(patch_preds), 1, 1])
-
-#         # Add prediction to the heatmap
-#         for patch_idx, (xleft, ytop) in enumerate(zip(xlefts, ytops)):
-#             xleft_abs = int(xleft * scale) - 1
-#             ytop_abs = int((ytop * scale) + y_start) - 1
-            
-#             #heatmap[box[0][1]:box[1][1], box[0][0]:box[1][0]] += 1
-            
-#             heatmaps[idx, ytop_abs:ytop_abs + window_width_abs,
-#                         xleft_abs:xleft_abs + window_width_abs] += (le.inverse_transform([patch_preds[patch_idx]])[0] == "vehicles")
-
-#     return heatmaps
-
-
-# def get_sliding_window_preds(imgs, model, scaler, y_start=400, y_stop=656, cell_stride=2,
-#                              scale=1, color_space="HLS"):
+# Define a function to return HOG features and visualization
+def get_hog_features(imgs, orient, pix_per_cell, cell_per_block, 
+                        vis=False, feature_vec=True):
+    # Call with two outputs if vis==True
+    if vis == True:
+        pass # TODO
+    else: 
+        features = []
+        for img in imgs:
+            img_features = np.stack([
+                hog(img[:,:,ch], orientations=orient, pixels_per_cell=(pix_per_cell, pix_per_cell),
+                        cells_per_block=(cell_per_block, cell_per_block), transform_sqrt=True, 
+                        visualise=vis, feature_vector=feature_vec) \
+                        for ch in range(img.shape[2])])
+            features.append(img_features)
+        features = np.stack(features)
+        return features
 
 def get_sliding_window_preds(imgs, model, scaler, le, orient, pix_per_cell, cell_per_block, y_start=400, y_stop=656, cell_stride=2, scale=1, colorspace="HLS", spatial_size=(16, 16), hist_bins=32):
     """
@@ -244,14 +132,8 @@ def get_sliding_window_preds(imgs, model, scaler, le, orient, pix_per_cell, cell
 
     # Compute hog features over whole image for efficiency.
     # hog_features = get_HOG_features(imgs_cropped, feature_vec=False)
-    hog_features = []
-    for img_cropped in imgs_cropped:
-        hog_features_image = []
-        for ch in range(3):
-            hog_features_image.append(preprocess.get_hog_features(img_cropped[:,:,ch], orient, pix_per_cell, cell_per_block, feature_vec=False))
-        hog_features.append(hog_features_image)
         
-    hog_features = np.array(hog_features)
+    hog_features = get_hog_features(imgs_cropped, c.ORIENT, c.PIX_PER_CELL, c.CELL_PER_BLOCK, vis=False, feature_vec=False)
 
     for x_step in range(num_steps_x):
         for y_step in range(num_steps_y):
@@ -260,23 +142,12 @@ def get_sliding_window_preds(imgs, model, scaler, le, orient, pix_per_cell, cell
 
             
             # Extract HOG for this patch
-            c1_HOG = hog_features[:,
-                                  0,
+            patch_HOG_channels = [np.reshape(hog_features[:,
+                                  ch,
                                   y_pos:y_pos + nblocks_per_window,
-                                  x_pos:x_pos + nblocks_per_window]
-            c2_HOG = hog_features[:,
-                                  1,
-                                  y_pos:y_pos + nblocks_per_window,
-                                  x_pos:x_pos + nblocks_per_window]
-            c3_HOG = hog_features[:,
-                                  2,
-                                  y_pos:y_pos + nblocks_per_window,
-                                  x_pos:x_pos + nblocks_per_window]
-            c1_HOG_ravelled = np.reshape(c1_HOG, [len(imgs), -1])
-            c2_HOG_ravelled = np.reshape(c2_HOG, [len(imgs), -1])
-            c3_HOG_ravelled = np.reshape(c3_HOG, [len(imgs), -1])
+                                  x_pos:x_pos + nblocks_per_window], (len(imgs), -1)) for ch in range(imgs_cropped.shape[3])]
 
-            patch_HOG = np.concatenate((c1_HOG_ravelled, c2_HOG_ravelled, c3_HOG_ravelled), axis=1)
+            patch_HOG = np.concatenate(patch_HOG_channels, axis=1)
 
             xleft = x_pos * pix_per_cell
             ytop = y_pos * pix_per_cell
@@ -287,8 +158,8 @@ def get_sliding_window_preds(imgs, model, scaler, le, orient, pix_per_cell, cell
                                  xleft:xleft + window]
 
             # Get color features
-            patch_color_bins = np.array([preprocess.bin_spatial(patch, size=spatial_size) for patch in patches])
-            patch_color_hists = np.array([preprocess.color_hist(patch, nbins=hist_bins) for patch in patches])
+            patch_color_bins = get_color_bin_features(patches, c.COLOR_BIN_SHAPE)
+            patch_color_hists = get_color_hist_features(patches, c.NUM_HIST_BINS)
 
 
             # Combine and normalize features
@@ -307,39 +178,12 @@ def get_sliding_window_preds(imgs, model, scaler, le, orient, pix_per_cell, cell
             window_width_abs = np.int(window * scale)
 
             # Add prediction to the heatmap
-            heatmaps[:, ytop_abs :ytop_abs + window_width_abs,
-                        xleft_abs:xleft_abs + window_width_abs] += le.inverse_transform(patch_preds) == "vehicles"
+            if c.LOAD_DYELAX:
+                     heatmaps[:, ytop_abs :ytop_abs + window_width_abs,
+                        xleft_abs:xleft_abs + window_width_abs] += patch_preds
+            else:
+                heatmaps[:, ytop_abs :ytop_abs + window_width_abs,
+                            xleft_abs:xleft_abs + window_width_abs] += le.inverse_transform(patch_preds) == "vehicles"
 
     return heatmaps
 
-class RingBufSmoother(object):
-        """
-        Smoothes heatmaps across several iterations and applies thresholds
-        """
-
-        def __init__(self, shape, length=10, threshold=4):
-            self.length = length
-            self.data = np.zeros([length] + list(shape), dtype=np.float32)
-            self.threshold = threshold
-            self.index = 0
-            self.count = 0
-
-        def extend(self, x):
-            """
-            Adds array x to ring buffer.
-            :param x: The element to add to the RingBuffer
-            """
-            self.data[self.index] = x
-            self.index = (self.index + 1) % self.length
-            
-            self.count += 1
-            if self.count > len(self.data):
-                self.count = len(self.data)
-
-        def mean(self):
-            return np.mean(self.data[:self.count], axis = 0)
-        
-        def rolling_threshold(self):
-            heatmap = self.mean() 
-            heatmap[heatmap < self.threshold] = 0
-            return heatmap
