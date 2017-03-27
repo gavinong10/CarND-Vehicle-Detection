@@ -8,16 +8,16 @@ COLOR_BIN_SHAPE = (16, 16)
 # Color Hist
 NUM_HIST_BINS = 32
 
-BUFFER_LEN = 10
-MIN_HEAT_THRES = 14 #17 #14
+BUFFER_LEN = 8 #10 (REPORT)
+MIN_HEAT_THRES = 4 #14 (REPORT) #17 #14
 
 ########################
 
 UNBIAS_DATA = False
-RETRAIN = True
+RETRAIN = False
 SAVE_LOAD_APPENDIX = "_biased"
 OUTPUT_NAME = "biased_output.mp4"
 
 BATCH_SIZE = 20
-START_FRAME = 300
-FRAMES_TO_PROCESS = 60 #None #60 #None #100 # None for the full video
+START_FRAME = 0
+FRAMES_TO_PROCESS = None #60 #None #100 # None for the full video

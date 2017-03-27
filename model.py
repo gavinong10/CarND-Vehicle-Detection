@@ -171,10 +171,10 @@ def get_sliding_window_preds(imgs, model, scaler, le, orient, pix_per_cell, cell
             ytop_abs = np.int(ytop * scale) + y_start
             window_width_abs = np.int(window * scale)
 
-            predictions_inverse_transform = le.inverse_transform(patch_preds)
             # Add prediction to the heatmap
+            predictions_inverse_transform = le.inverse_transform(patch_preds)
             heatmaps[:, ytop_abs :ytop_abs + window_width_abs,
-                        xleft_abs:xleft_abs + window_width_abs] += predictions_inverse_transform == "vehicles"
+                    xleft_abs:xleft_abs + window_width_abs] += predictions_inverse_transform == "vehicles"
 
             if show_window:
                 # Draw blue rectangle on sliding_windows on the first sliding window; copy through at the end.

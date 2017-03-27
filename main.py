@@ -94,10 +94,10 @@ def gen_images_from_video():
         pickle.dump(svc_model, open('models/svc_model%s.p' % (c.SAVE_LOAD_APPENDIX), 'wb'))
         pickle.dump(le, open('models/le%s.p' % (c.SAVE_LOAD_APPENDIX), 'wb'))
         pickle.dump(X_scaler, open('models/X_scaler%s.p' % (c.SAVE_LOAD_APPENDIX), 'wb'))
-    
+
     svc_model = pickle.load(open('models/svc_model%s.p' % (c.SAVE_LOAD_APPENDIX), 'rb'))
-    le = pickle.load(open('models/le%s.p' % (c.SAVE_LOAD_APPENDIX), 'rb'))
     X_scaler = pickle.load(open('models/X_scaler%s.p' % (c.SAVE_LOAD_APPENDIX), 'rb'))
+    le = pickle.load(open('models/le%s.p' % (c.SAVE_LOAD_APPENDIX), 'rb'))
     
     # Load in images from video
     frames_generator, n_frames = get_generator_for_frames(batch_size=c.BATCH_SIZE)
@@ -109,10 +109,10 @@ def gen_images_from_video():
     start_offset = 0
 
     plt.figure(1)
-    fig = plt.figure(figsize=(20, 5 * c.FRAMES_TO_PROCESS))
+    fig = plt.figure(figsize=(20, 5 * frames_to_process))
     plt.figure(2)
-    fig = plt.figure(figsize=(20, 5 * c.FRAMES_TO_PROCESS))
-    gs = gridspec.GridSpec(c.FRAMES_TO_PROCESS, 2)
+    fig = plt.figure(figsize=(20, 5 * frames_to_process))
+    gs = gridspec.GridSpec(frames_to_process, 2)
 
     for frames in frames_generator:
         if start_offset < c.START_FRAME:
@@ -150,7 +150,9 @@ def gen_images_from_video():
         if frames_processed >= frames_to_process:
             break
     
+    plt.figure(1)
     plt.savefig('output_images/heatmaps.png')
+    plt.figure(2)
     plt.savefig('output_images/labelled_bboxes.png')
     # Release everything if job is finished
     # cap.release()
@@ -162,10 +164,10 @@ def main():
         pickle.dump(svc_model, open('models/svc_model%s.p' % (c.SAVE_LOAD_APPENDIX), 'wb'))
         pickle.dump(le, open('models/le%s.p' % (c.SAVE_LOAD_APPENDIX), 'wb'))
         pickle.dump(X_scaler, open('models/X_scaler%s.p' % (c.SAVE_LOAD_APPENDIX), 'wb'))
-    
+
     svc_model = pickle.load(open('models/svc_model%s.p' % (c.SAVE_LOAD_APPENDIX), 'rb'))
-    le = pickle.load(open('models/le%s.p' % (c.SAVE_LOAD_APPENDIX), 'rb'))
     X_scaler = pickle.load(open('models/X_scaler%s.p' % (c.SAVE_LOAD_APPENDIX), 'rb'))
+    le = pickle.load(open('models/le%s.p' % (c.SAVE_LOAD_APPENDIX), 'rb'))
     
     # Load in images from video
     frames_generator, n_frames = get_generator_for_frames(batch_size=c.BATCH_SIZE)
@@ -213,5 +215,5 @@ def main():
     writer.close()
 
 if __name__ == "__main__":
-    main()
     #gen_images_from_video()
+    main()
